@@ -1,31 +1,25 @@
-// =====================
-// Fake HTTP server cho Render (BẮT BUỘC)
-// =====================
-const http = require("http");
-
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Discord TTS bot is running");
-  })
-  .listen(process.env.PORT || 3000);
-
-// =====================
-// Discord TTS Bot
-// =====================
-const { Client, GatewayIntentBits } = require("discord.js");
-const {
+import { Client, GatewayIntentBits } from "discord.js";
+import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-} = require("@discordjs/voice");
-const gTTS = require("gtts");
-const fs = require("fs");
+} from "@discordjs/voice";
+import gTTS from "gtts";
+import fs from "fs";
+import { exec } from "child_process";
+import express from "express";
 
+// ===== CONFIG =====
+const TOKEN = process.env.TOKEN;
 const PREFIX = "!";
-const COOLDOWN = 10000; // 10 giây / user
 
+// ===== KEEP RENDER ALIVE =====
+const app = express();
+app.get("/", (req, res) => res.send("Bot is alive"));
+app.listen(3000);
+
+// ===== DISCORD CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -35,76 +29,68 @@ const client = new Client({
   ],
 });
 
-// lưu connection + player theo server
-const connections = new Map();
-// lưu cooldown theo user
-const cooldowns = new Map();
+let connection;
+let player = createAudioPlayer();
+let cooldown = new Set();
 
+// ===== READY =====
+client.once("ready", () => {
+  console.log("✅ Bot online:", client.user.tag);
+});
+
+// ===== MESSAGE =====
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
   if (!msg.content.startsWith(PREFIX)) return;
 
-  const args = msg.content.slice(PREFIX.length).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
+  const args = msg.content.slice(1).trim().split(/ +/);
+  const command = args.shift()?.toLowerCase();
 
-  // =====================
-  // !tts
-  // =====================
+  // ===== !tts =====
   if (command === "tts") {
+    if (cooldown.has(msg.author.id)) return msg.reply("⏳ chờ 3s nha");
+
     const text = args.join(" ");
-    if (!text) return msg.reply("ghi nội dung đi 😭");
+    if (!text) return msg.reply("❌ nhập chữ đi");
 
-    const vc = msg.member.voice.channel;
-    if (!vc) return msg.reply("vào voice trước đã 😤");
+    const channel = msg.member.voice.channel;
+    if (!channel) return msg.reply("❌ vào voice trước");
 
-    // chống spam
-    const last = cooldowns.get(msg.author.id) || 0;
-    if (Date.now() - last < COOLDOWN) {
-      return msg.reply("từ từ thôi 😅 đợi chút");
-    }
-    cooldowns.set(msg.author.id, Date.now());
+    cooldown.add(msg.author.id);
+    setTimeout(() => cooldown.delete(msg.author.id), 3000);
 
-    let data = connections.get(msg.guild.id);
-
-    // nếu bot chưa join voice
-    if (!data) {
-      const connection = joinVoiceChannel({
-        channelId: vc.id,
+    // join voice (KHÔNG auto leave)
+    if (!connection) {
+      connection = joinVoiceChannel({
+        channelId: channel.id,
         guildId: msg.guild.id,
         adapterCreator: msg.guild.voiceAdapterCreator,
       });
-
-      const player = createAudioPlayer();
       connection.subscribe(player);
-
-      data = { connection, player };
-      connections.set(msg.guild.id, data);
     }
 
-    // TTS tiếng Việt
+    // TTS
     const tts = new gTTS(text, "vi");
     tts.save("tts.mp3", () => {
-      const resource = createAudioResource("tts.mp3");
-      data.player.play(resource);
-
-      data.player.once(AudioPlayerStatus.Idle, () => {
-        if (fs.existsSync("tts.mp3")) fs.unlinkSync("tts.mp3");
-        // ❌ KHÔNG thoát voice
-      });
+      // BOOST VOLUME
+      exec(
+        `ffmpeg -nostdin -y -i tts.mp3 -af "volume=3.5" -ar 48000 -ac 1 out.wav`,
+        () => {
+          const resource = createAudioResource("out.wav");
+          player.play(resource);
+        },
+      );
     });
   }
 
-  // =====================
-  // !disconnect
-  // =====================
+  // ===== !disconnect =====
   if (command === "disconnect") {
-    const data = connections.get(msg.guild.id);
-    if (!data) return msg.reply("bot chưa vào voice 🤨");
-
-    data.connection.destroy();
-    connections.delete(msg.guild.id);
-    msg.reply("đã thoát voice 👋");
+    if (connection) {
+      connection.destroy();
+      connection = null;
+      msg.reply("👋 đã thoát voice");
+    }
   }
 });
 
-client.login(process.env.TOKEN);
+client.login(TOKEN);

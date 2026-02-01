@@ -9,7 +9,7 @@ const gTTS = require("gtts");
 const fs = require("fs");
 
 const PREFIX = "!";
-const COOLDOWN = 5000; // 5 giây
+const COOLDOWN = 10000; // 5 giây
 
 const client = new Client({
   intents: [

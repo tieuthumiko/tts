@@ -1,15 +1,13 @@
-import "libsodium-wrappers";
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
   createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
+  createAudioResource
 } from "@discordjs/voice";
 import gTTS from "gtts";
-import fs from "fs";
 import { exec } from "child_process";
 import express from "express";
+import fs from "fs";
 
 // ===== CONFIG =====
 const TOKEN = process.env.TOKEN;

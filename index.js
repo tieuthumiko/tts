@@ -1,3 +1,4 @@
+import ffmpegPath from "ffmpeg-static";
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
@@ -80,7 +81,7 @@ client.on("messageCreate", async (msg) => {
     tts.save("tts.mp3", () => {
       // FFmpeg convert + boost volume
       exec(
-        `ffmpeg -nostdin -y -i tts.mp3 -af "volume=3.5" -ar 48000 -ac 1 out.wav`,
+        `"${ffmpegPath}" -nostdin -y -i tts.mp3 -af "volume=3.5" -ar 48000 -ac 1 out.wav`,
         (err) => {
           if (err) {
             console.error("FFmpeg error:", err);
@@ -91,8 +92,6 @@ client.on("messageCreate", async (msg) => {
           player.play(resource);
         }
       );
-    });
-  }
 
   // ===== !disconnect =====
   if (cmd === "disconnect") {

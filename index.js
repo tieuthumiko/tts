@@ -1,15 +1,22 @@
-import sodium from "libsodium-wrappers";
-await sodium.ready;
-
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
-  NoSubscriberBehavior
+  AudioPlayerStatus
 } from "@discordjs/voice";
-import { spawn } from "child_process";
 
+import fs from "fs";
+import { exec } from "child_process";
+import ffmpegPath from "ffmpeg-static";
+import gTTS from "gtts";
+
+// ===== CONFIG =====
+const PREFIX = "!tts";
+const COOLDOWN = 3000; // ms
+const TOKEN = process.env.TOKEN;
+
+// ===== CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -19,57 +26,65 @@ const client = new Client({
   ]
 });
 
-let connection;
+const player = createAudioPlayer();
+const cooldown = new Map();
+let connection = null;
 
+// ===== READY =====
+client.once("ready", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+});
+
+// ===== MESSAGE =====
 client.on("messageCreate", async (msg) => {
-  if (msg.content === "!join") {
-    if (!msg.member.voice.channel) return;
+  if (msg.author.bot) return;
+  if (!msg.content.startsWith(PREFIX)) return;
 
+  // anti spam
+  const last = cooldown.get(msg.author.id) || 0;
+  if (Date.now() - last < COOLDOWN) {
+    return msg.reply("⏳ từ từ thôi bro");
+  }
+  cooldown.set(msg.author.id, Date.now());
+
+  const text = msg.content.slice(PREFIX.length).trim();
+  if (!text) return msg.reply("❌ nhập nội dung đi");
+
+  const channel = msg.member.voice.channel;
+  if (!channel) return msg.reply("❌ vào voice trước");
+
+  // join voice (không tự out)
+  if (!connection) {
     connection = joinVoiceChannel({
-      channelId: msg.member.voice.channel.id,
+      channelId: channel.id,
       guildId: msg.guild.id,
       adapterCreator: msg.guild.voiceAdapterCreator
     });
-
-    msg.reply("✅ Joined voice");
-  }
-
-  if (msg.content === "!tts") {
-    if (!connection) return msg.reply("❌ Chưa join voice");
-
-    const player = createAudioPlayer({
-      behaviors: {
-        noSubscriber: NoSubscriberBehavior.Play
-      }
-    });
-
-    const ffmpeg = spawn("ffmpeg", [
-      "-nostdin",
-      "-f", "lavfi",
-      "-i", "sine=frequency=440",
-      "-ac", "2",
-      "-ar", "48000",
-      "-f", "s16le",
-      "pipe:1"
-    ]);
-
-    const resource = createAudioResource(ffmpeg.stdout, {
-      inlineVolume: true
-    });
-
-    resource.volume.setVolume(1.0);
-
     connection.subscribe(player);
-    player.play(resource);
-
-    msg.reply("🔊 Playing sound");
   }
 
-  if (msg.content === "!disconnect") {
-    connection?.destroy();
-    connection = null;
-    msg.reply("👋 Disconnected");
-  }
+  // TTS
+  const gtts = new gTTS(text, "vi");
+  gtts.save("tts.mp3", () => {
+    exec(
+      `"${ffmpegPath}" -nostdin -y -i tts.mp3 -ar 48000 -ac 1 -af "volume=3.0" out.wav`,
+      (err) => {
+        if (err) {
+          console.error(err);
+          return msg.reply("❌ lỗi ffmpeg");
+        }
+
+        const resource = createAudioResource("out.wav");
+        player.play(resource);
+      }
+    );
+  });
 });
 
-client.login(process.env.TOKEN);
+// ===== PLAYER =====
+player.on(AudioPlayerStatus.Idle, () => {
+  // KHÔNG tự disconnect
+});
+
+// ===== LOGIN =====
+client.login(TOKEN);

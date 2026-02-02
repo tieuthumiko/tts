@@ -1,24 +1,15 @@
+import sodium from "libsodium-wrappers";
+await sodium.ready;
+
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
   createAudioPlayer,
-  createAudioResource
+  createAudioResource,
+  NoSubscriberBehavior
 } from "@discordjs/voice";
-import gTTS from "gtts";
-import { exec } from "child_process";
-import express from "express";
-import ffmpegPath from "ffmpeg-static";
+import { spawn } from "child_process";
 
-// ===== CONFIG =====
-const TOKEN = process.env.TOKEN;
-const PREFIX = "!";
-
-// ===== KEEP RENDER ALIVE =====
-const app = express();
-app.get("/", (req, res) => res.send("Bot alive"));
-app.listen(3000);
-
-// ===== DISCORD CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -28,87 +19,57 @@ const client = new Client({
   ]
 });
 
-let connection = null;
-const player = createAudioPlayer();
-const cooldown = new Set();
+let connection;
 
-// ===== DEBUG =====
-player.on("stateChange", (o, n) => {
-  console.log("PLAYER:", o.status, "->", n.status);
-});
-
-// ===== READY =====
-client.once("ready", () => {
-  console.log("✅ Bot online:", client.user.tag);
-});
-
-// ===== MESSAGE =====
 client.on("messageCreate", async (msg) => {
-  if (msg.author.bot) return;
-  if (!msg.content.startsWith(PREFIX)) return;
+  if (msg.content === "!join") {
+    if (!msg.member.voice.channel) return;
 
-  const args = msg.content.slice(1).trim().split(/ +/);
-  const cmd = args.shift()?.toLowerCase();
-
-  // ===== !tts =====
-  if (cmd === "tts") {
-    if (cooldown.has(msg.author.id)) {
-      msg.reply("⏳ chờ 3 giây nha");
-      return;
-    }
-
-    const text = args.join(" ");
-    if (!text) {
-      msg.reply("❌ nhập chữ đi");
-      return;
-    }
-
-    const channel = msg.member.voice.channel;
-    if (!channel) {
-      msg.reply("❌ vào voice trước");
-      return;
-    }
-
-    cooldown.add(msg.author.id);
-    setTimeout(() => cooldown.delete(msg.author.id), 3000);
-
-    // join voice
-    if (!connection) {
-      connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: msg.guild.id,
-        adapterCreator: msg.guild.voiceAdapterCreator
-      });
-      connection.subscribe(player);
-    }
-
-    // TTS
-    const tts = new gTTS(text, "vi");
-    tts.save("tts.mp3", () => {
-      exec(
-        `"${ffmpegPath}" -nostdin -y -i tts.mp3 -af "volume=3.5" -ar 48000 -ac 1 out.wav`,
-        (err) => {
-          if (err) {
-            console.error("FFmpeg error:", err);
-            return;
-          }
-
-          const resource = createAudioResource("out.wav");
-          player.play(resource);
-        }
-      );
+    connection = joinVoiceChannel({
+      channelId: msg.member.voice.channel.id,
+      guildId: msg.guild.id,
+      adapterCreator: msg.guild.voiceAdapterCreator
     });
+
+    msg.reply("✅ Joined voice");
   }
 
-  // ===== !disconnect =====
-  if (cmd === "disconnect") {
-    if (connection) {
-      connection.destroy();
-      connection = null;
-      msg.reply("👋 đã thoát voice");
-    }
+  if (msg.content === "!tts") {
+    if (!connection) return msg.reply("❌ Chưa join voice");
+
+    const player = createAudioPlayer({
+      behaviors: {
+        noSubscriber: NoSubscriberBehavior.Play
+      }
+    });
+
+    const ffmpeg = spawn("ffmpeg", [
+      "-nostdin",
+      "-f", "lavfi",
+      "-i", "sine=frequency=440",
+      "-ac", "2",
+      "-ar", "48000",
+      "-f", "s16le",
+      "pipe:1"
+    ]);
+
+    const resource = createAudioResource(ffmpeg.stdout, {
+      inlineVolume: true
+    });
+
+    resource.volume.setVolume(1.0);
+
+    connection.subscribe(player);
+    player.play(resource);
+
+    msg.reply("🔊 Playing sound");
+  }
+
+  if (msg.content === "!disconnect") {
+    connection?.destroy();
+    connection = null;
+    msg.reply("👋 Disconnected");
   }
 });
 
-// ===== LOGIN =====
-client.login(TOKEN);
+client.login(process.env.TOKEN);

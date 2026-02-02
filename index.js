@@ -1,3 +1,4 @@
+import "libsodium-wrappers";
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
